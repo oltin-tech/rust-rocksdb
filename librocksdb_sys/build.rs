@@ -78,9 +78,12 @@ fn link_cpp(build: &mut Build) {
 fn build_rocksdb() -> Build {
     let target = env::var("TARGET").expect("TARGET was not set");
     let mut cfg = Config::new("rocksdb");
+    let not_win = !cfg!(target_os = "windows");
     if cfg!(feature = "jemalloc") && NO_JEMALLOC_TARGETS.iter().all(|i| !target.contains(i)) {
-        cfg.register_dep("JEMALLOC").define("WITH_JEMALLOC", "ON");
-        println!("cargo:rustc-link-lib=static=jemalloc");
+        if not_win {
+            cfg.register_dep("JEMALLOC").define("WITH_JEMALLOC", "ON");
+            println!("cargo:rustc-link-lib=static=jemalloc");
+        }
     }
     if cfg!(feature = "portable") {
         cfg.define("PORTABLE", "ON");
@@ -88,33 +91,37 @@ fn build_rocksdb() -> Build {
     if cfg!(feature = "sse") {
         cfg.define("FORCE_SSE42", "ON");
     }
-    // RocksDB cmake script expect libz.a being under ${DEP_Z_ROOT}/lib, but libz-sys crate put it
-    // under ${DEP_Z_ROOT}/build. Append the path to CMAKE_PREFIX_PATH to get around it.
-    env::set_var("CMAKE_PREFIX_PATH", {
-        let zlib_path = format!("{}/build", env::var("DEP_Z_ROOT").unwrap());
-        if let Ok(prefix_path) = env::var("CMAKE_PREFIX_PATH") {
-            format!("{};{}", prefix_path, zlib_path)
-        } else {
-            zlib_path
-        }
-    });
-    let dst = cfg
-        .define("WITH_GFLAGS", "OFF")
-        .register_dep("Z")
-        .define("WITH_ZLIB", "ON")
-        .register_dep("BZIP2")
-        .define("WITH_BZ2", "ON")
-        .register_dep("LZ4")
-        .define("WITH_LZ4", "ON")
-        .register_dep("ZSTD")
-        .define("WITH_ZSTD", "ON")
-        .register_dep("SNAPPY")
-        .define("WITH_SNAPPY", "ON")
+
+    cfg.define("WITH_GFLAGS", "OFF")
         .define("WITH_TESTS", "OFF")
-        .define("WITH_TOOLS", "OFF")
-        .build_target("rocksdb")
-        .very_verbose(true)
-        .build();
+        .define("WITH_TOOLS", "OFF");
+    if not_win {
+        // RocksDB cmake script expect libz.a being under ${DEP_Z_ROOT}/lib, but libz-sys crate put it
+        // under ${DEP_Z_ROOT}/build. Append the path to CMAKE_PREFIX_PATH to get around it.
+        env::set_var("CMAKE_PREFIX_PATH", {
+            let zlib_path = format!("{}/build", env::var("DEP_Z_ROOT").unwrap());
+            if let Ok(prefix_path) = env::var("CMAKE_PREFIX_PATH") {
+                format!("{};{}", prefix_path, zlib_path)
+            } else {
+                zlib_path
+            }
+        });
+        cfg.register_dep("Z")
+            .define("WITH_ZLIB", "ON")
+            .register_dep("BZIP2")
+            .define("WITH_BZ2", "ON")
+            .register_dep("LZ4")
+            .define("WITH_LZ4", "ON")
+            .register_dep("ZSTD")
+            .define("WITH_ZSTD", "ON")
+            .register_dep("SNAPPY")
+            .define("WITH_SNAPPY", "ON");
+    } else {
+        cfg.define("FAIL_ON_WARNINGS", "OFF")
+            .define("WITH_RUNTIME_DEBUG", "OFF")
+            .define("PORTABLE", "ON");
+    }
+    let dst = cfg.build_target("rocksdb").very_verbose(true).build();
     let build_dir = format!("{}/build", dst.display());
     let mut build = Build::new();
     if cfg!(target_os = "windows") {
@@ -146,10 +153,15 @@ fn build_rocksdb() -> Build {
 
     println!("cargo:rustc-link-lib=static=rocksdb");
     println!("cargo:rustc-link-lib=static=titan");
-    println!("cargo:rustc-link-lib=static=z");
-    println!("cargo:rustc-link-lib=static=bz2");
-    println!("cargo:rustc-link-lib=static=lz4");
-    println!("cargo:rustc-link-lib=static=zstd");
-    println!("cargo:rustc-link-lib=static=snappy");
+    if not_win {
+        println!("cargo:rustc-link-lib=static=z");
+        println!("cargo:rustc-link-lib=static=bz2");
+        println!("cargo:rustc-link-lib=static=lz4");
+        println!("cargo:rustc-link-lib=static=zstd");
+        println!("cargo:rustc-link-lib=static=snappy");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=Shlwapi");
+        println!("cargo:rustc-link-lib=dylib=Rpcrt4");
+    }
     build
 }
