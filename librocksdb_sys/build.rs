@@ -117,7 +117,8 @@ fn build_rocksdb() -> Build {
             .register_dep("SNAPPY")
             .define("WITH_SNAPPY", "ON");
     } else {
-        cfg.define("FAIL_ON_WARNINGS", "OFF")
+        cfg.cxxflag("/MP")
+            .define("FAIL_ON_WARNINGS", "OFF")
             .define("WITH_RUNTIME_DEBUG", "OFF")
             .define("PORTABLE", "ON");
     }
