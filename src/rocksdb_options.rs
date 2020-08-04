@@ -13,7 +13,10 @@
 // limitations under the License.
 //
 
-use compaction_filter::{new_compaction_filter, CompactionFilter, CompactionFilterHandle};
+use compaction_filter::{
+    new_compaction_filter, new_compaction_filter_factory, CompactionFilter,
+    CompactionFilterFactory, CompactionFilterHandle,
+};
 use comparator::{self, compare_callback, ComparatorCallback};
 use crocksdb_ffi::{
     self, DBBlockBasedTableOptions, DBBottommostLevelCompaction, DBCompactOptions,
@@ -31,7 +34,6 @@ use rocksdb::Env;
 use rocksdb::{Cache, MemoryAllocator};
 use slice_transform::{new_slice_transform, SliceTransform};
 use std::ffi::{CStr, CString};
-use std::mem;
 use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
@@ -454,9 +456,10 @@ impl ReadOptions {
     pub fn set_table_filter(&mut self, filter: Box<dyn TableFilter>) {
         unsafe {
             let f = Box::into_raw(Box::new(filter));
+            let f = f as *mut c_void;
             crocksdb_ffi::crocksdb_readoptions_set_table_filter(
                 self.inner,
-                mem::transmute(f),
+                f,
                 table_filter,
                 destroy_table_filter,
             );
@@ -555,6 +558,12 @@ impl CompactOptions {
     pub fn set_target_level(&mut self, v: i32) {
         unsafe {
             crocksdb_ffi::crocksdb_compactoptions_set_target_level(self.inner, v);
+        }
+    }
+
+    pub fn set_target_path_id(&mut self, v: i32) {
+        unsafe {
+            crocksdb_ffi::crocksdb_compactoptions_set_target_path_id(self.inner, v);
         }
     }
 
@@ -686,7 +695,9 @@ impl DBOptions {
     }
 
     pub fn set_titandb_options(&mut self, opts: &TitanDBOptions) {
-        self.titan_inner = unsafe { crocksdb_ffi::ctitandb_options_copy(opts.inner) }
+        unsafe {
+            self.titan_inner = crocksdb_ffi::ctitandb_options_copy(opts.inner);
+        }
     }
 
     pub fn increase_parallelism(&mut self, parallelism: i32) {
@@ -994,6 +1005,35 @@ impl DBOptions {
         }
     }
 
+    pub fn set_rate_bytes_per_sec(&mut self, rate_bytes_per_sec: i64) -> Result<(), String> {
+        let limiter = unsafe { crocksdb_ffi::crocksdb_options_get_ratelimiter(self.inner) };
+        if limiter.is_null() {
+            return Err("Failed to get rate limiter".to_owned());
+        }
+
+        let rate_limiter = RateLimiter { inner: limiter };
+
+        unsafe {
+            crocksdb_ffi::crocksdb_ratelimiter_set_bytes_per_second(
+                rate_limiter.inner,
+                rate_bytes_per_sec,
+            );
+        }
+        Ok(())
+    }
+
+    pub fn get_rate_bytes_per_sec(&self) -> Option<i64> {
+        let limiter = unsafe { crocksdb_ffi::crocksdb_options_get_ratelimiter(self.inner) };
+        if limiter.is_null() {
+            return None;
+        }
+
+        let rate_limiter = RateLimiter { inner: limiter };
+        let rate =
+            unsafe { crocksdb_ffi::crocksdb_ratelimiter_get_bytes_per_second(rate_limiter.inner) };
+        Some(rate)
+    }
+
     // Create a info log with `path` and save to options logger field directly.
     // TODO: export more logger options like level, roll size, time, etc...
     pub fn create_info_log(&self, path: &str) -> Result<(), String> {
@@ -1019,6 +1059,22 @@ impl DBOptions {
     pub fn enable_pipelined_write(&self, v: bool) {
         unsafe {
             crocksdb_ffi::crocksdb_options_set_enable_pipelined_write(self.inner, v);
+        }
+    }
+
+    pub fn enable_multi_batch_write(&self, v: bool) {
+        unsafe {
+            crocksdb_ffi::crocksdb_options_set_enable_multi_batch_write(self.inner, v);
+        }
+    }
+
+    pub fn is_enable_multi_batch_write(&self) -> bool {
+        unsafe { crocksdb_ffi::crocksdb_options_is_enable_multi_batch_write(self.inner) }
+    }
+
+    pub fn enable_unordered_write(&self, v: bool) {
+        unsafe {
+            crocksdb_ffi::crocksdb_options_set_unordered_write(self.inner, v);
         }
     }
 
@@ -1056,6 +1112,25 @@ impl DBOptions {
                 num_paths as c_int,
             );
         }
+    }
+
+    pub fn get_db_paths_num(&self) -> usize {
+        unsafe { crocksdb_ffi::crocksdb_options_get_db_paths_num(self.inner) }
+    }
+
+    pub fn get_db_path(&self, idx: usize) -> Option<String> {
+        unsafe {
+            let ptr = crocksdb_ffi::crocksdb_options_get_db_path(self.inner, idx as size_t);
+            if ptr.is_null() {
+                return None;
+            }
+            let s = CStr::from_ptr(ptr).to_str().unwrap().to_owned();
+            Some(s)
+        }
+    }
+
+    pub fn get_path_target_size(&self, idx: usize) -> u64 {
+        unsafe { crocksdb_ffi::crocksdb_options_get_path_target_size(self.inner, idx as size_t) }
     }
 
     /// Set paranoid checks. The default value is `true`. We can set it to `false`
@@ -1162,8 +1237,8 @@ impl ColumnFamilyOptions {
     }
 
     pub fn set_titandb_options(&mut self, opts: &TitanDBOptions) {
-        if !opts.inner.is_null() {
-            self.titan_inner = unsafe { crocksdb_ffi::ctitandb_options_copy(opts.inner) }
+        unsafe {
+            self.titan_inner = crocksdb_ffi::ctitandb_options_copy(opts.inner);
         }
     }
 
@@ -1189,16 +1264,12 @@ impl ColumnFamilyOptions {
     /// set.
     ///
     /// By default, compaction will only pass keys written after the most
-    /// recent call to GetSnapshot() to filter. However, if `ignore_snapshots`
-    /// is set to true, even if the keys were written before the last snapshot
-    /// will be passed to filter too. For more details please checkout
-    /// rocksdb's documentation.
+    /// recent call to GetSnapshot() to filter.
     ///
     /// See also `CompactionFilter`.
     pub fn set_compaction_filter<S>(
         &mut self,
         name: S,
-        ignore_snapshots: bool,
         filter: Box<dyn CompactionFilter>,
     ) -> Result<(), String>
     where
@@ -1209,11 +1280,32 @@ impl ColumnFamilyOptions {
                 Ok(s) => s,
                 Err(e) => return Err(format!("failed to convert to cstring: {:?}", e)),
             };
-            self.filter = Some(new_compaction_filter(c_name, ignore_snapshots, filter)?);
-            crocksdb_ffi::crocksdb_options_set_compaction_filter(
-                self.inner,
-                self.filter.as_ref().unwrap().inner,
-            );
+            let filter = new_compaction_filter(c_name, filter);
+            crocksdb_ffi::crocksdb_options_set_compaction_filter(self.inner, filter.inner);
+            self.filter = Some(filter);
+            Ok(())
+        }
+    }
+
+    /// Set compaction filter factory.
+    ///
+    /// See also `CompactionFilterFactory`.
+    pub fn set_compaction_filter_factory<S>(
+        &mut self,
+        name: S,
+        factory: Box<dyn CompactionFilterFactory>,
+    ) -> Result<(), String>
+    where
+        S: Into<Vec<u8>>,
+    {
+        let c_name = match CString::new(name) {
+            Ok(s) => s,
+            Err(e) => return Err(format!("failed to convert to cstring: {:?}", e)),
+        };
+        unsafe {
+            let factory = new_compaction_filter_factory(c_name, factory)?;
+            crocksdb_ffi::crocksdb_options_set_compaction_filter_factory(self.inner, factory.inner);
+            std::mem::forget(factory); // Deconstructor will be called after `self` is dropped.
             Ok(())
         }
     }
@@ -1270,10 +1362,11 @@ impl ColumnFamilyOptions {
             name: CString::new(name.as_bytes()).unwrap(),
             merge_fn: merge_fn,
         });
+        let cb = Box::into_raw(cb) as *mut c_void;
 
         unsafe {
             let mo = crocksdb_ffi::crocksdb_mergeoperator_create(
-                mem::transmute(cb),
+                cb,
                 merge_operator::destructor_callback,
                 full_merge_callback,
                 partial_merge_callback,
@@ -1289,10 +1382,11 @@ impl ColumnFamilyOptions {
             name: CString::new(name.as_bytes()).unwrap(),
             f: compare_fn,
         });
+        let cb = Box::into_raw(cb) as *mut c_void;
 
         unsafe {
             let cmp = crocksdb_ffi::crocksdb_comparator_create(
-                mem::transmute(cb),
+                cb,
                 comparator::destructor_callback,
                 compare_callback,
                 comparator::name_callback,
@@ -1334,7 +1428,8 @@ impl ColumnFamilyOptions {
     pub fn set_max_bytes_for_level_multiplier(&mut self, mul: i32) {
         unsafe {
             crocksdb_ffi::crocksdb_options_set_max_bytes_for_level_multiplier(
-                self.inner, mul as f64,
+                self.inner,
+                f64::from(mul),
             );
         }
     }
@@ -1668,7 +1763,7 @@ impl CColumnFamilyDescriptor {
         CColumnFamilyDescriptor { inner }
     }
 
-    pub fn name<'a>(&'a self) -> &'a str {
+    pub fn name(&self) -> &str {
         unsafe {
             let raw_cf_name = crocksdb_ffi::crocksdb_name_from_column_family_descriptor(self.inner);
             CStr::from_ptr(raw_cf_name).to_str().unwrap()
