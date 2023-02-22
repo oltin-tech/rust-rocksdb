@@ -21,6 +21,9 @@ fn main() {
     )
     .define("WITH_TITAN_TESTS", "OFF")
     .define("WITH_TITAN_TOOLS", "OFF");
+    cfg.define("CMAKE_POLICY_DEFAULT_CMP0066", "NEW")
+        .define("CMAKE_POLICY_DEFAULT_CMP0056", "NEW")
+        .define("CMAKE_POLICY_DEFAULT_CMP0128", "NEW");
     if not_win {
         // RocksDB cmake script expect libz.a being under ${DEP_Z_ROOT}/lib, but libz-sys crate put it
         // under ${DEP_Z_ROOT}/build. Append the path to CMAKE_PREFIX_PATH to get around it.
