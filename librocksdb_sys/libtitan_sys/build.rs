@@ -46,7 +46,7 @@ fn main() {
             .register_dep("SNAPPY")
             .define("WITH_SNAPPY", "ON");
     } else {
-        cfg.cxxflag("/MP")
+        cfg.cxxflag("/MP4")
             .define("FAIL_ON_WARNINGS", "OFF")
             .define("WITH_RUNTIME_DEBUG", "OFF")
             .define("PORTABLE", "ON");
