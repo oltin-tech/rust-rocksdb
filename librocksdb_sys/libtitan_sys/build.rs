@@ -46,7 +46,8 @@ fn main() {
             .register_dep("SNAPPY")
             .define("WITH_SNAPPY", "ON");
     } else {
-        cfg.cxxflag("/MP4")
+        cfg.generator("Visual Studio 15 2017")
+            .cxxflag("/MP4")
             .define("FAIL_ON_WARNINGS", "OFF")
             .define("WITH_RUNTIME_DEBUG", "OFF")
             .define("PORTABLE", "ON");
