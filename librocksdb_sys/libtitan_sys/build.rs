@@ -47,7 +47,9 @@ fn main() {
             .define("WITH_SNAPPY", "ON");
     } else {
         cfg.generator("Visual Studio 15 2017")
-            .cxxflag("/MP4")
+            .cxxflag("/MP")
+            .register_dep("LZ4")
+            .define("WITH_LZ4", "ON")
             .define("FAIL_ON_WARNINGS", "OFF")
             .define("WITH_RUNTIME_DEBUG", "OFF")
             .define("PORTABLE", "ON");
