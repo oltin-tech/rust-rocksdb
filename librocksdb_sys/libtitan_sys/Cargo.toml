@@ -25,10 +25,10 @@ path-slash = "0.1.1"
 git = "https://github.com/busyjay/lz4-rs.git"
 branch = "adjust-build"
 
-[target.'cfg(not(windows))'.dependencies.snappy-sys]
+[dependencies.snappy-sys]
 git = "https://github.com/busyjay/rust-snappy.git"
 branch = "static-link"
 
-[target.'cfg(not(windows))'.dependencies.libz-sys]
+[dependencies.libz-sys]
 version = "1.0.25"
 features = ["static"]
