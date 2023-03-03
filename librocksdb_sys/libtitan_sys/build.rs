@@ -50,6 +50,8 @@ fn main() {
             .cxxflag("/MP")
             .register_dep("LZ4")
             .define("WITH_LZ4", "ON")
+            .register_dep("SNAPPY")
+            .define("WITH_SNAPPY", "ON")
             .define("FAIL_ON_WARNINGS", "OFF")
             .define("WITH_RUNTIME_DEBUG", "OFF")
             .define("PORTABLE", "ON");
