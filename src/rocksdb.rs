@@ -336,7 +336,6 @@ impl<D> DBIterator<D> {
 #[deprecated]
 pub type Kv = (Vec<u8>, Vec<u8>);
 
-#[deprecated]
 impl<'b, D> Iterator for &'b mut DBIterator<D> {
     #[allow(deprecated)]
     type Item = Kv;
